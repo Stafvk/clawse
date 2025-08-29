@@ -134,7 +134,7 @@ class RealTimeComplianceSearch {
 
     // Phase 4: AI processing and deduplication
     updateProgress('ai_processing', 75, `Processing ${allRawResults.length} rules with AI...`);
-    const processedResults = await this.processAndDeduplicateResults(allRawResults, query, updateProgress);
+    const processedResults = await this.processAndDeduplicateResults(allRawResults, query, businessProfile, updateProgress);
 
     // Phase 5: Store new rules in background (don't wait)
     updateProgress('storing', 90, 'Storing new rules in database...');
@@ -197,9 +197,9 @@ class RealTimeComplianceSearch {
 
         // Filter out low-relevance rules and sort by score
         return scoredRules
-          .filter(rule => rule.relevanceScore > 0.6) // Much stricter relevance threshold
+          .filter(rule => rule.relevanceScore > 0.8) // Very strict relevance threshold
           .sort((a, b) => b.relevanceScore - a.relevanceScore)
-          .slice(0, 30); // Limit results to most relevant
+          .slice(0, 20); // Limit results to most relevant
       }
 
       return profileRules;
@@ -353,7 +353,11 @@ class RealTimeComplianceSearch {
       'cybersecurity labeling', 'copyright circumvention',
       'supplemental nutrition', 'food assistance',
       'clearing agency', 'derivatives',
-      'patent fees', 'trademark fees'
+      'patent fees', 'trademark fees',
+      'federal acquisition regulation', 'sam.gov', 'government contract',
+      'ophthalmic', 'eyeglass rule', 'broadcast', 'cable television',
+      'burma sanctions', 'ofac', 'myanmar', 'equal employment opportunity',
+      'advanced manufacturing', 'production credit', 'modernizing grant'
     ];
 
     highPenaltyKeywords.forEach(keyword => {
@@ -735,7 +739,7 @@ class RealTimeComplianceSearch {
   /**
    * Process and deduplicate search results with AI
    */
-  async processAndDeduplicateResults(allRawResults, query, updateProgress = null) {
+  async processAndDeduplicateResults(allRawResults, query, businessProfile, updateProgress = null) {
     console.log(`🤖 Processing ${allRawResults.length} raw results...`);
 
     // Separate existing rules from new API results
@@ -758,7 +762,7 @@ class RealTimeComplianceSearch {
 
     // Process new rules with AI in batches
     if (updateProgress) updateProgress('ai_categorizing', 82, 'Categorizing rules with AI...');
-    const processedNewRules = await this.batchProcessWithAI(deduplicatedRules, query, updateProgress);
+    const processedNewRules = await this.batchProcessWithAI(deduplicatedRules, query, businessProfile, updateProgress);
 
     return {
       rules: [...existingRules, ...processedNewRules],
@@ -791,7 +795,7 @@ class RealTimeComplianceSearch {
   /**
    * Process rules with AI in batches for efficiency
    */
-  async batchProcessWithAI(rawRules, query, updateProgress = null) {
+  async batchProcessWithAI(rawRules, query, businessProfile, updateProgress = null) {
     if (!this.openaiApiKey || rawRules.length === 0) {
       console.log('⚠️ No OpenAI key or no rules to process, using basic processing');
       return rawRules.map(rule => this.basicRuleProcessing(rule));
@@ -812,7 +816,7 @@ class RealTimeComplianceSearch {
       }
 
       try {
-        const batchResults = await this.processBatchWithAI(batch, query);
+        const batchResults = await this.processBatchWithAI(batch, query, businessProfile);
         processedRules.push(...batchResults);
       } catch (error) {
         console.error('❌ AI batch processing failed, using basic processing:', error.message);
@@ -833,11 +837,11 @@ class RealTimeComplianceSearch {
   /**
    * Process a batch of rules with AI
    */
-  async processBatchWithAI(rawRules, query) {
+  async processBatchWithAI(rawRules, query, businessProfile) {
     const OpenAI = require('openai');
     const openai = new OpenAI({ apiKey: this.openaiApiKey });
 
-    const businessContext = this.inferBusinessContext(query);
+    const businessContext = this.createBusinessContext(businessProfile, query);
 
     const prompt = `
 You are a compliance expert specializing in business regulations. Analyze these ${rawRules.length} rules for a business with this context:
@@ -846,16 +850,19 @@ BUSINESS CONTEXT: ${businessContext}
 SEARCH QUERY: "${query}"
 
 CRITICAL FILTERING - EXCLUDE ALL rules for:
-- Healthcare: hospitals, Medicare/Medicaid, medical facilities, nursing, dialysis, patient care, clinical
+- Healthcare: hospitals, Medicare/Medicaid, medical facilities, nursing, dialysis, patient care, clinical, ophthalmic, eyeglass
 - Manufacturing: factories, appliances, furnaces, washers, production equipment, assembly lines
 - Aviation: aircraft, helicopters, airworthiness, flight operations (unless business specifically does air transport)
 - Marine: offshore wind, marine mammals, maritime, vessels, ships
 - Environmental: endangered species, wildlife protection, toxic substances, hazardous waste
 - Consumer Products: toys, children's products, infant safety, nursing pillows
-- Financial: mergers, acquisitions, derivatives, clearing agencies, premerger notifications
+- Financial: mergers, acquisitions, derivatives, clearing agencies, premerger notifications, federal acquisition, SAM.gov
 - Specialized: patent/trademark fees, cybersecurity labeling, copyright circumvention
 - Food Programs: supplemental nutrition, food assistance, SNAP benefits
 - Energy: nuclear, power plants, utility regulations, energy production
+- Broadcasting: broadcast, cable, equal employment opportunity, FCC regulations
+- International: Burma sanctions, OFAC sanctions, foreign trade
+- Federal Contracting: federal acquisition regulation, government contracts, SAM registration
 
 FOR TRANSPORTATION BUSINESS - ONLY INCLUDE rules about:
 - Commercial vehicle safety and maintenance standards
@@ -867,7 +874,19 @@ FOR TRANSPORTATION BUSINESS - ONLY INCLUDE rules about:
 - Passenger safety (if passenger transport)
 - Freight/cargo regulations (if freight transport)
 
-RELEVANCE THRESHOLD: Only include rules with relevance_score > 0.8
+BUSINESS-SPECIFIC FILTERING - ONLY INCLUDE rules relevant to the specific business context:
+
+FOR THIS BUSINESS TYPE AND INDUSTRY - ONLY INCLUDE rules about:
+- Business formation and registration requirements for their business type
+- Federal and state tax obligations specific to their industry
+- Employment law and payroll requirements (if has employees)
+- Industry-specific licensing and permits
+- Professional services regulations (if applicable)
+- Industry-specific safety and compliance requirements
+- State and local business requirements for their location
+- Industry-specific insurance and liability requirements
+
+RELEVANCE THRESHOLD: Only include rules with relevance_score > 0.9 (VERY STRICT)
 
 Rules to process:
 ${rawRules.map((rule, index) => `
@@ -901,7 +920,7 @@ For RELEVANT rules only, return a JSON object with this structure:
   "relevance_score": 0.0-1.0
 }
 
-ONLY include rules with relevance_score > 0.8. Return as JSON array, no other text.`;
+ONLY include rules with relevance_score > 0.9. Return as JSON array, no other text.`;
 
     // Using gpt-5-nano for fast, cost-effective compliance rule processing
     const response = await openai.chat.completions.create({
@@ -1021,7 +1040,52 @@ ONLY include rules with relevance_score > 0.8. Return as JSON array, no other te
   }
 
   /**
-   * Infer business context from search query
+   * Create detailed business context from business profile
+   */
+  createBusinessContext(businessProfile, query) {
+    if (!businessProfile) {
+      return this.inferBusinessContext(query);
+    }
+
+    const context = [];
+
+    // Business type and structure
+    if (businessProfile.businessType) {
+      context.push(`Business Type: ${businessProfile.businessType}`);
+    }
+
+    // Industry/Category
+    if (businessProfile.businessCategory) {
+      context.push(`Industry: ${businessProfile.businessCategory}`);
+    }
+
+    // Location
+    if (businessProfile.businessState) {
+      context.push(`Location: ${businessProfile.businessState}`);
+      if (businessProfile.businessCity) {
+        context.push(`City: ${businessProfile.businessCity}`);
+      }
+    }
+
+    // Size indicators
+    if (businessProfile.employeeCount) {
+      context.push(`Employee Count: ${businessProfile.employeeCount}`);
+    }
+
+    if (businessProfile.annualRevenue) {
+      context.push(`Annual Revenue: ${businessProfile.annualRevenue}`);
+    }
+
+    // Business description
+    if (businessProfile.businessDescription) {
+      context.push(`Business Description: ${businessProfile.businessDescription}`);
+    }
+
+    return context.join(', ');
+  }
+
+  /**
+   * Infer business context from search query (fallback)
    */
   inferBusinessContext(query) {
     const text = query.toLowerCase();

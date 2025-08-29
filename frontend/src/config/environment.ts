@@ -16,9 +16,9 @@ const getEnvironmentConfig = (): EnvironmentConfig => {
     };
   }
 
-  // Production configuration - Netlify Functions
+  // Production configuration - Railway API
   return {
-    API_BASE_URL: '/.netlify/functions',
+    API_BASE_URL: 'https://clawse-business-compliance-production.up.railway.app/api',
     ENVIRONMENT: 'production'
   };
 };
@@ -27,14 +27,8 @@ export const config = getEnvironmentConfig();
 
 // Helper function to get full API URL
 export const getApiUrl = (endpoint: string): string => {
-  if (config.ENVIRONMENT === 'production') {
-    // Convert /compliance/analyze-enhanced to compliance-analyze-enhanced
-    const functionName = endpoint
-      .replace(/^\//, '') // Remove leading slash
-      .replace(/\//g, '-'); // Replace slashes with dashes
-    return `${config.API_BASE_URL}/${functionName}`;
-  }
-  return `${config.API_BASE_URL}/api${endpoint}`;
+  // Railway uses standard REST API format, same as development
+  return `${config.API_BASE_URL}${endpoint}`;
 };
 
 // Export for debugging

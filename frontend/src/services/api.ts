@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { config } from '../config/environment';
 import type {
   BusinessProfile,
   ComplianceRule,
@@ -10,8 +11,8 @@ import type {
 
 // Create axios instance with base configuration
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api',
-  timeout: 30000,
+  baseURL: config.API_BASE_URL,
+  timeout: 120000, // Increased timeout for Railway (no function limits)
   headers: {
     'Content-Type': 'application/json',
   },
